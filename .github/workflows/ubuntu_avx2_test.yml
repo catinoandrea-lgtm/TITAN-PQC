@@ -1,0 +1,11 @@
+name: Ubuntu x86_64 (AVX2) Benchmark
+on: [push]
+jobs:
+  bench-ubuntu:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Compila TITAN-AVX2
+      run: make clean && make
+    - name: Esegui Roundtrip & Benchmark
+      run: ./titan_avx2_bench
