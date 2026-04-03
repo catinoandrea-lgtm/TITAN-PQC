@@ -1,13 +1,11 @@
-name: Apple M1 Benchmark
+name: Apple M1 Full Benchmark
 on: [push]
 jobs:
   bench-macos:
     runs-on: macos-14
     steps:
     - uses: actions/checkout@v4
-    - name: Compila su M1
-      run: |
-        chmod +x build_m1.sh
-        ./build_m1.sh
+    - name: Compila TITAN Full
+      run: make   # Questo userà il Makefile che hai nella cartella pub3
     - name: Esegui Benchmark
-      run: ./titan_arm_bench_m1
+      run: ./titan_m1_bench
