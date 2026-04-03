@@ -64,3 +64,10 @@ make clean && make
 
 # On Android/Linux ARM:
 ./titan_android_bench
+
+
+## 📜 License
+This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
+
+### Academic Use
+If you use this code in your research, please cite our work. This artifact is released to foster research in Post-Quantum Cryptography and hardware acceleration.
