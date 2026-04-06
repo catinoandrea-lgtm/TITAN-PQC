@@ -6,6 +6,6 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - name: Compila TITAN Full
-      run: make   # Questo userà il Makefile che hai nella cartella pub3
+      run: make
     - name: Esegui Benchmark
       run: ./titan_m1_bench
