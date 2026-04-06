@@ -1,0 +1,11 @@
+name: ML-KEM-512 KAT Conformance Tests
+on: [push]
+jobs:
+  kat-test-ubuntu:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Compile KAT test suite
+      run: gcc -O3 -std=gnu11 -Wall -Wextra titan_kat_test.c kem32.c keccakf1600.c -o titan_kat -lm
+    - name: Run KAT tests
+      run: ./titan_kat
