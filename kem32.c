@@ -2,19 +2,16 @@
  * kem32.c  –  TITAN-KEM-512 scalar (C99, no NEON)
  * Andrea Catino – Independent Researcher, Italy
  *
- * v2.2  – FIX CRITICO: gen_matrix usa bulk shake128(672B)
- *          invece di shake128_squeeze(3B) in loop
- *          (315 perm/poly  →  4 perm/poly  → ~28x speedup)
+ * v2.3  – Streaming gen_matrix (incremental SHAKE-128 squeeze)
  *
  * Compile: clang -std=c99 -O2 -lm
- *   test_titan32.c kem_bridge.c kem32.c keccakf1600.c sha256.c -o test_scalar
+ *   titan_full_bench.c kem_bridge.c kem32.c keccakf1600.c -o titan_scalar
  */
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
 #include "kem32.h"
 #include "keccakf1600.h"
-#include "sha256.h"
 
 /* ── costanti ────────────────────────────────────────────────────── */
 #define Q           3329
@@ -172,9 +169,7 @@ static void cbd2(int16_t r[256], const uint8_t *noise) {
     }
 }
 
-/* ── gen_matrix: bulk SHAKE-128 (FIX v2.2) ──────────────────────── */
-/*   672 byte = 4 blocchi = 4 permutazioni per poly                  */
-/*   vs. vecchio approccio: ~315 permutazioni per poly               */
+/* ── gen_matrix: SHAKE-128 streaming (rejection sampling robusto) ── */
 static void gen_matrix32(int16_t A[2][2][256],
                          const uint8_t rho[32], int transposed) {
     int i, j, ctr, off;
@@ -183,15 +178,22 @@ static void gen_matrix32(int16_t A[2][2][256],
         memcpy(seed, rho, 32);
         seed[32] = transposed ? (uint8_t)j : (uint8_t)i;
         seed[33] = transposed ? (uint8_t)i : (uint8_t)j;
-        uint8_t xbuf[XOF_BUFLEN];
-        shake128(xbuf, XOF_BUFLEN, seed, 34);
-        ctr=0; off=0;
-        while (ctr<256 && off<=XOF_BUFLEN-3) {
-            int16_t d1=(int16_t)(xbuf[off]|((int16_t)(xbuf[off+1]&0x0F)<<8));
-            int16_t d2=(int16_t)((xbuf[off+1]>>4)|((int16_t)xbuf[off+2]<<4));
-            off+=3;
-            if (d1<Q) A[i][j][ctr++]=d1;
-            if (ctr<256 && d2<Q) A[i][j][ctr++]=d2;
+        KeccakState xof;
+        shake128_init(&xof);
+        shake128_absorb(&xof, seed, 34);
+        shake128_finalize(&xof);
+        ctr=0;
+        while (ctr<256) {
+            uint8_t xbuf[SHAKE128_RATE];
+            shake128_squeeze(&xof, xbuf, SHAKE128_RATE);
+            off=0;
+            while (ctr<256 && off<=SHAKE128_RATE-3) {
+                int16_t d1=(int16_t)(xbuf[off]|((int16_t)(xbuf[off+1]&0x0F)<<8));
+                int16_t d2=(int16_t)((xbuf[off+1]>>4)|((int16_t)xbuf[off+2]<<4));
+                off+=3;
+                if (d1<Q) A[i][j][ctr++]=d1;
+                if (ctr<256 && d2<Q) A[i][j][ctr++]=d2;
+            }
         }
         poly_tomont(A[i][j]);
     }
@@ -257,13 +259,14 @@ static void pke_enc(Kem32Ciphertext *ct, const Kem32PublicKey *pk,
       poly_compress4(p,v); }
 }
 
-/* ── KEYGEN ──────────────────────────────────────────────────────── */
+/* ── KEYGEN  (FIPS 203 §7.1: seed = d[32] || z[32]) ────────────── */
 void kem32_keygen(Kem32PublicKey *pk, Kem32SecretKey *sk,
-                  const uint8_t seed[32]) {
+                  const uint8_t seed[64]) {
+    const uint8_t *d=seed, *z=seed+32;
     uint8_t rho[32],sigma[32],buf[64];
     int16_t A[2][2][256],s[2][256],e[2][256],shat[2][256],t[2][256];
     int i, j, l;
-    sha3_512(buf,seed,32);
+    sha3_512(buf,d,32);
     memcpy(rho,buf,32); memcpy(sigma,buf+32,32);
     gen_matrix32(A, rho, 0);   /* A */
     /* s (nonce 0,1) */
@@ -297,7 +300,8 @@ void kem32_keygen(Kem32PublicKey *pk, Kem32SecretKey *sk,
     { uint8_t *p=sk->data;
       for (i=0; i<2; i++) { poly_pack(p,shat[i]); p+=384; }
       memcpy(p,pk->data,800); p+=800;
-      sha3_256(p,pk->data,800); p+=32; sha256(p,seed,32); }
+      sha3_256(p,pk->data,800); p+=32;
+      memcpy(p,z,32); }  /* z copiato direttamente (FIPS 203) */
 }
 
 /* ── ENCAPS ──────────────────────────────────────────────────────── */

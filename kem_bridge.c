@@ -8,7 +8,7 @@
 #include "kem32.h"
 
 void kem_keygen(KemPublicKey *pk, KemSecretKey *sk,
-                const uint8_t seed[32]) {
+                const uint8_t seed[64]) {
     kem32_keygen((Kem32PublicKey *)pk,(Kem32SecretKey *)sk,seed);
 }
 void kem_encaps(KemCiphertext *ct, KemSharedSecret *ss,

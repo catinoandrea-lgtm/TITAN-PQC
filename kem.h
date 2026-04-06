@@ -14,6 +14,7 @@ extern "C" {
 #define KEM_CT_BYTES  768
 #define KEM_SS_BYTES  32
 #define KEM_SYM_BYTES 32
+#define KEM_KEYGEN_BYTES 64   /* FIPS 203: d[32] || z[32] */
 
 typedef struct { uint8_t data[KEM_PK_BYTES];  } KemPublicKey;
 typedef struct { uint8_t data[KEM_SK_BYTES];  } KemSecretKey;
@@ -21,7 +22,7 @@ typedef struct { uint8_t data[KEM_CT_BYTES];  } KemCiphertext;
 typedef struct { uint8_t data[KEM_SS_BYTES];  } KemSharedSecret;
 
 void kem_keygen (KemPublicKey *pk, KemSecretKey *sk,
-                 const uint8_t seed[KEM_SYM_BYTES]);
+                 const uint8_t seed[KEM_KEYGEN_BYTES]);
 void kem_encaps (KemCiphertext *ct, KemSharedSecret *ss,
                  const KemPublicKey *pk,
                  const uint8_t randomness[KEM_SYM_BYTES]);

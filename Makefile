@@ -15,14 +15,14 @@ ifeq ($(UNAME_M),x86_64)
 else ifeq ($(UNAME_S),Darwin)
     CC = clang
     CFLAGS += -mcpu=apple-m1
-    SRCS = titan_full_bench.c kem.c ntt32.c keccakf1600.c sha256.c
+    SRCS = titan_full_bench.c kem.c ntt32.c keccakf1600.c
     TARGET = titan_m1_bench
 
 # --- CONFIGURAZIONE ANDROID / LINUX ARM64 ---
 else ifeq ($(UNAME_M),aarch64)
     CC = clang
     CFLAGS += -march=armv8-a+simd
-    SRCS = titan_full_bench.c kem.c ntt32.c keccakf1600.c sha256.c
+    SRCS = titan_full_bench.c kem.c ntt32.c keccakf1600.c
     TARGET = titan_android_bench
 endif
 

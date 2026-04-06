@@ -1,29 +1,83 @@
 /*
- * kem.c – TITAN-KEM-512  (ARM NEON accelerated)
- * Andrea Catino – Independent Researcher, Italy
+ * titan_cxxdroid.c — TITAN ML-KEM-512 (single file for CxxDroid)
+ * Andrea Catino — v2.3-FIPS203
  *
- * v2.3 – Streaming gen_matrix (SHAKE-128 incremental squeeze)
- *       – Barrett reduction in all NTT butterfly levels
- *       – Montgomery domain: tomont/frommont gates at encode/decode
- *
- * Compile: clang -std=c99 -O3 -march=armv8-a+simd -lm
- *   titan_full_bench.c kem.c ntt32.c keccakf1600.c -o titan_bench
+ * CxxDroid: impostare linguaggio C (non C++), compilare questo file solo.
+ * Flags suggeriti: -O3 -std=c99
  */
-#include "kem.h"
-#include "keccakf1600.h"
-#include <string.h>
+#define _POSIX_C_SOURCE 199309L
+#include <stdio.h>
 #include <stdint.h>
+#include <string.h>
+#include <time.h>
 #include <arm_neon.h>
 
+/* ══════════════════════════════════════════════════════════════════
+ *  KECCAK-f[1600]
+ * ══════════════════════════════════════════════════════════════════ */
+#define ROL64(a,n) (((uint64_t)(a)<<(n))|((uint64_t)(a)>>(64-(n))))
+
+static const uint64_t RC[24] = {
+    0x0000000000000001ULL,0x0000000000008082ULL,0x800000000000808aULL,
+    0x8000000080008000ULL,0x000000000000808bULL,0x0000000080000001ULL,
+    0x8000000080008081ULL,0x8000000000008009ULL,0x000000000000008aULL,
+    0x0000000000000088ULL,0x0000000080008009ULL,0x000000008000000aULL,
+    0x000000008000808bULL,0x800000000000008bULL,0x8000000000008089ULL,
+    0x8000000000008003ULL,0x8000000000008002ULL,0x8000000000000080ULL,
+    0x000000000000800aULL,0x800000008000000aULL,0x8000000080008081ULL,
+    0x8000000000008080ULL,0x0000000080000001ULL,0x8000000080008008ULL
+};
+static const int ROTC[24]={1,3,6,10,15,21,28,36,45,55,2,14,27,41,56,8,25,43,62,18,39,61,20,44};
+static const int PI[24]={10,7,11,17,18,3,5,16,8,21,24,4,15,23,19,13,12,2,20,14,22,9,6,1};
+
+static void KeccakF1600(uint64_t s[25]) {
+    uint64_t bc[5],t;
+    for(int r=0;r<24;r++){
+        for(int i=0;i<5;i++) bc[i]=s[i]^s[i+5]^s[i+10]^s[i+15]^s[i+20];
+        for(int i=0;i<5;i++){t=bc[(i+4)%5]^ROL64(bc[(i+1)%5],1);for(int j=0;j<25;j+=5)s[j+i]^=t;}
+        t=s[1]; for(int i=0;i<24;i++){int j=PI[i];bc[0]=s[j];s[j]=ROL64(t,ROTC[i]);t=bc[0];}
+        for(int j=0;j<25;j+=5){for(int i=0;i<5;i++)bc[i]=s[j+i];for(int i=0;i<5;i++)s[j+i]=bc[i]^(~bc[(i+1)%5]&bc[(i+2)%5]);}
+        s[0]^=RC[r];
+    }
+}
+static void keccak_absorb(uint64_t s[25],unsigned rate,const uint8_t*in,size_t inlen,uint8_t pad){
+    unsigned r64=rate/8;
+    while(inlen>=rate){for(unsigned i=0;i<r64;i++){uint64_t tmp;memcpy(&tmp,in+8*i,8);s[i]^=tmp;}KeccakF1600(s);in+=rate;inlen-=rate;}
+    uint8_t t[200]={0};memcpy(t,in,inlen);t[inlen]=pad;t[rate-1]|=0x80;
+    for(unsigned i=0;i<r64;i++){uint64_t tmp;memcpy(&tmp,t+8*i,8);s[i]^=tmp;}
+}
+static void keccak_squeeze(uint64_t s[25],unsigned rate,uint8_t*out,size_t outlen){
+    while(outlen>0){KeccakF1600(s);size_t n=(outlen<rate)?outlen:rate;memcpy(out,s,n);out+=n;outlen-=n;}
+}
+static void sha3_256(uint8_t out[32],const uint8_t*in,size_t inlen){uint64_t s[25]={0};keccak_absorb(s,136,in,inlen,0x06);KeccakF1600(s);memcpy(out,s,32);}
+static void sha3_512(uint8_t out[64],const uint8_t*in,size_t inlen){uint64_t s[25]={0};keccak_absorb(s,72,in,inlen,0x06);KeccakF1600(s);memcpy(out,s,64);}
+static void shake256(uint8_t*out,size_t outlen,const uint8_t*in,size_t inlen){uint64_t s[25]={0};keccak_absorb(s,136,in,inlen,0x1F);keccak_squeeze(s,136,out,outlen);}
+
+/* Streaming SHAKE-128 */
+typedef struct { uint64_t s[25]; } KeccakState;
+static void shake128_init(KeccakState*st){memset(st,0,sizeof*st);}
+static void shake128_absorb(KeccakState*st,const uint8_t*in,size_t l){keccak_absorb((uint64_t*)st,168,in,l,0x1F);}
+static void shake128_finalize(KeccakState*st){(void)st;}
+static void shake128_squeeze(KeccakState*st,uint8_t*out,size_t l){keccak_squeeze((uint64_t*)st,168,out,l);}
+
+/* ══════════════════════════════════════════════════════════════════
+ *  ML-KEM-512 (TITAN engine)
+ * ══════════════════════════════════════════════════════════════════ */
 #define Q           3329
 #define QINV        ((int16_t)(-3327))
 #define BARR        20159
 #define R2          ((int16_t)1353)
 #define INV_N_MONT  ((int16_t)512)
+#define SHAKE128_RATE 168
+#define KEM_PK_BYTES  800
+#define KEM_SK_BYTES  1632
+#define KEM_CT_BYTES  768
+#define KEM_SS_BYTES  32
 
-/* 4 blocchi SHAKE-128 = 672 byte → ~364 coefficienti validi attesi > 256 */
-#define SHAKE128_RATE   168
-#define XOF_BUFLEN      (4 * SHAKE128_RATE)     /* 672 bytes */
+typedef struct { uint8_t data[KEM_PK_BYTES];  } KemPublicKey;
+typedef struct { uint8_t data[KEM_SK_BYTES];  } KemSecretKey;
+typedef struct { uint8_t data[KEM_CT_BYTES];  } KemCiphertext;
+typedef struct { uint8_t data[KEM_SS_BYTES];  } KemSharedSecret;
 
 static const int16_t ZETAS[128] = {
  -1044, -758, -359,-1517, 1493, 1422,  287,  202,
@@ -70,8 +124,8 @@ static inline int16_t barrett(int16_t a){
     return (int16_t)(a-t*(int16_t)Q);
 }
 
-/* ── NTT forward/inverse (ibrido NEON+scalar) ───────────────────── */
-void ntt_forward(int16_t r[256]) {
+/* ── NTT forward/inverse ─────────────────────────────────────────── */
+static void ntt_forward(int16_t r[256]) {
     int k=1,len,s,j;
     for(len=128;len>=8;len>>=1){
         for(s=0;s<256;s+=2*len){
@@ -83,8 +137,7 @@ void ntt_forward(int16_t r[256]) {
                 vst1q_s16(&r[j+len],vsubq_s16(r0,t));
             }
         }
-        for(int i=0;i<256;i+=8)
-            vst1q_s16(&r[i],barrett_neon(vld1q_s16(&r[i])));
+        for(int i=0;i<256;i+=8) vst1q_s16(&r[i],barrett_neon(vld1q_s16(&r[i])));
     }
     for(;len>=2;len>>=1)
         for(s=0;s<256;s+=2*len){
@@ -96,7 +149,7 @@ void ntt_forward(int16_t r[256]) {
             }
         }
 }
-void ntt_inverse(int16_t r[256]) {
+static void ntt_inverse(int16_t r[256]) {
     int k=127,len,s,j;
     for(len=2;len<=4;len<<=1)
         for(s=0;s<256;s+=2*len){
@@ -119,7 +172,7 @@ void ntt_inverse(int16_t r[256]) {
     int16x8_t vi=vdupq_n_s16(INV_N_MONT);
     for(j=0;j<256;j+=8) vst1q_s16(&r[j],fqmul_neon(vld1q_s16(&r[j]),vi));
 }
-void ntt_pointwise_mul(int16_t *c,const int16_t *a,const int16_t *b){
+static void ntt_pointwise_mul(int16_t *c,const int16_t *a,const int16_t *b){
     for(int i=0;i<256;i+=8)
         vst1q_s16(&c[i],fqmul_neon(vld1q_s16(&a[i]),vld1q_s16(&b[i])));
 }
@@ -165,8 +218,7 @@ static void poly_compress10(uint8_t *r,const int16_t p[256]){
     for(int i=0;i<256;i+=4){
         uint16_t t[4];
         for(int j=0;j<4;j++){
-            int16_t x=p[i+j];
-            while(x<0)x+=Q; while(x>=Q)x-=Q;
+            int16_t x=p[i+j]; while(x<0)x+=Q; while(x>=Q)x-=Q;
             t[j]=(uint16_t)(((uint32_t)x*1024+Q/2)/Q&0x3FF);
         }
         r[5*(i/4)]  =(uint8_t)t[0];
@@ -202,8 +254,7 @@ static void poly_decompress4(int16_t p[256],const uint8_t *r){
     }
 }
 
-/* ── gen_matrix: SHAKE-128 streaming (rejection sampling robusto) ── */
-/*   Squeeze incrementale 168B/blocco fino a completamento 256 coeff. */
+/* ── gen_matrix: streaming SHAKE-128 ─────────────────────────────── */
 static void gen_matrix(int16_t A[2][2][256],
                        const uint8_t rho[32], int transposed){
     for(int i=0;i<2;i++) for(int j=0;j<2;j++){
@@ -240,22 +291,17 @@ static void pke_enc(KemCiphertext *ct,const KemPublicKey *pk,
     uint8_t rho[32]; memcpy(rho,pk->data+768,32);
     for(int i=0;i<2;i++){poly_unpack(that[i],pk->data+i*384);
                          poly_tomont(that[i]); ntt_forward(that[i]);}
-    /* A^T: transposed=1 */
     gen_matrix(A, rho, 1);
-    /* r (nonce 0,1) */
     for(int i=0;i<2;i++){
         uint8_t ext[33],ns[128]; memcpy(ext,r_seed,32); ext[32]=(uint8_t)i;
         shake256(ns,128,ext,33); cbd2(rv[i],ns); poly_tomont(rv[i]); ntt_forward(rv[i]);
     }
-    /* e1 (nonce 2,3) */
     for(int i=0;i<2;i++){
         uint8_t ext[33],ns[128]; memcpy(ext,r_seed,32); ext[32]=(uint8_t)(2+i);
         shake256(ns,128,ext,33); cbd2(e1[i],ns); poly_tomont(e1[i]);
     }
-    /* e2 (nonce 4) */
     { uint8_t ext[33],ns[128]; memcpy(ext,r_seed,32); ext[32]=4;
       shake256(ns,128,ext,33); cbd2(e2,ns); poly_tomont(e2); }
-    /* u = INTT(A^T * r) + e1 */
     for(int i=0;i<2;i++){
         memset(u[i],0,512);
         for(int j=0;j<2;j++){int16_t tmp[256]; ntt_pointwise_mul(tmp,A[i][j],rv[j]);
@@ -264,7 +310,6 @@ static void pke_enc(KemCiphertext *ct,const KemPublicKey *pk,
         for(int l=0;l<256;l++) u[i][l]=barrett((int16_t)(u[i][l]+e1[i][l]));
         poly_frommont(u[i]);
     }
-    /* v = INTT(t^T * r) + e2 + m */
     memset(v,0,512);
     for(int j=0;j<2;j++){int16_t tmp[256]; ntt_pointwise_mul(tmp,that[j],rv[j]);
         for(int l=0;l<256;l++) v[l]=barrett((int16_t)(v[l]+tmp[l]));}
@@ -279,25 +324,22 @@ static void pke_enc(KemCiphertext *ct,const KemPublicKey *pk,
     poly_compress4(ctp,v);
 }
 
-/* ── KEYGEN  (FIPS 203 §7.1: seed = d[32] || z[32]) ────────────── */
-void kem_keygen(KemPublicKey *pk,KemSecretKey *sk,const uint8_t seed[64]){
+/* ── KEYGEN (FIPS 203: seed = d[32] || z[32]) ────────────────────── */
+static void kem_keygen(KemPublicKey *pk,KemSecretKey *sk,const uint8_t seed[64]){
     const uint8_t *d=seed, *z=seed+32;
     uint8_t rho[32],sigma[32],buf[64];
     int16_t A[2][2][256],s[2][256],e[2][256],shat[2][256],t[2][256];
     sha3_512(buf,d,32); memcpy(rho,buf,32); memcpy(sigma,buf+32,32);
-    gen_matrix(A, rho, 0);          /* A (non-transposed) */
-    /* s (nonce 0,1) */
+    gen_matrix(A, rho, 0);
     for(int i=0;i<2;i++){
         uint8_t ext[33],ns[128]; memcpy(ext,sigma,32); ext[32]=(uint8_t)i;
         shake256(ns,128,ext,33); cbd2(s[i],ns);
         poly_tomont(s[i]); memcpy(shat[i],s[i],512); ntt_forward(shat[i]);
     }
-    /* e (nonce 2,3) */
     for(int i=0;i<2;i++){
         uint8_t ext[33],ns[128]; memcpy(ext,sigma,32); ext[32]=(uint8_t)(2+i);
         shake256(ns,128,ext,33); cbd2(e[i],ns); poly_tomont(e[i]);
     }
-    /* t = INTT(A*s) + e */
     for(int i=0;i<2;i++){
         memset(t[i],0,512);
         for(int j=0;j<2;j++){int16_t tmp[256]; ntt_pointwise_mul(tmp,A[i][j],shat[j]);
@@ -312,11 +354,11 @@ void kem_keygen(KemPublicKey *pk,KemSecretKey *sk,const uint8_t seed[64]){
     for(int i=0;i<2;i++){poly_pack(skp,shat[i]); skp+=384;}
     memcpy(skp,pk->data,KEM_PK_BYTES); skp+=KEM_PK_BYTES;
     sha3_256(skp,pk->data,KEM_PK_BYTES); skp+=32;
-    memcpy(skp,z,32);  /* z copiato direttamente (FIPS 203) */
+    memcpy(skp,z,32);
 }
 
 /* ── ENCAPS ─────────────────────────────────────────────────────── */
-void kem_encaps(KemCiphertext *ct,KemSharedSecret *ss,
+static void kem_encaps(KemCiphertext *ct,KemSharedSecret *ss,
                 const KemPublicKey *pk,const uint8_t rnd[32]){
     uint8_t m[32],hpk[32],cin[64],kr[64],hct[32],ssin[64];
     sha3_256(m,rnd,32); sha3_256(hpk,pk->data,KEM_PK_BYTES);
@@ -327,7 +369,7 @@ void kem_encaps(KemCiphertext *ct,KemSharedSecret *ss,
 }
 
 /* ── DECAPS ─────────────────────────────────────────────────────── */
-int kem_decaps(KemSharedSecret *ss,const KemCiphertext *ct,
+static int kem_decaps(KemSharedSecret *ss,const KemCiphertext *ct,
                const KemSecretKey *sk){
     const uint8_t *skp=sk->data;
     int16_t shat[2][256],u[2][256],v[256],w[256]; uint8_t m[32];
@@ -363,4 +405,75 @@ int kem_decaps(KemSharedSecret *ss,const KemCiphertext *ct,
     sha3_256(hct,ct->data,KEM_CT_BYTES);
     memcpy(ssin,kr,32); memcpy(ssin+32,hct,32); sha3_256(ss->data,ssin,64);
     return -(int)fail;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+ *  BENCHMARK
+ * ══════════════════════════════════════════════════════════════════ */
+#include <sys/utsname.h>
+
+static double now_us(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec * 1e6 + (double)ts.tv_nsec * 1e-3;
+}
+
+int main(void) {
+    KemPublicKey pk; KemSecretKey sk; KemCiphertext ct;
+    KemSharedSecret ss1, ss2;
+    uint8_t seed[64] = {0x42};
+    uint8_t rnd[32]  = {0x55};
+    const int N = 1000;
+    int16_t poly[256] = {1};
+    struct utsname un; uname(&un);
+
+    printf("==========================================================\n");
+    printf("  TITAN ML-KEM-512 v2.3 | ARM NEON Benchmark\n");
+    printf("  Platform: %s\n", un.machine);
+    printf("==========================================================\n");
+
+    kem_keygen(&pk, &sk, seed);
+    kem_encaps(&ct, &ss1, &pk, rnd);
+    kem_decaps(&ss2, &ct, &sk);
+
+    if(memcmp(ss1.data, ss2.data, 32) == 0)
+        printf("[OK] Correctness: PASS (shared secrets match)\n\n");
+    else {
+        printf("[!!] Correctness: FAIL\n\n");
+        return 1;
+    }
+
+    /* Warmup */
+    for(int i=0; i<100; i++) kem_keygen(&pk, &sk, seed);
+
+    printf("[A] KEM PROTOCOL (N=%d)\n", N);
+    double t0 = now_us();
+    for(int i=0; i<N; i++) kem_keygen(&pk, &sk, seed);
+    double kg = (now_us()-t0)/N;
+    printf("    Keygen : %7.2f us\n", kg);
+
+    t0 = now_us();
+    for(int i=0; i<N; i++) kem_encaps(&ct, &ss1, &pk, rnd);
+    double en = (now_us()-t0)/N;
+    printf("    Encaps : %7.2f us\n", en);
+
+    t0 = now_us();
+    for(int i=0; i<N; i++) kem_decaps(&ss2, &ct, &sk);
+    double de = (now_us()-t0)/N;
+    printf("    Decaps : %7.2f us\n", de);
+
+    printf("    --------------------------------\n");
+    printf("    Total  : %7.2f us (full handshake)\n\n", kg+en+de);
+
+    printf("[B] NTT ENGINE (N=%d)\n", N*10);
+    t0 = now_us();
+    for(int i=0; i<N*10; i++) ntt_forward(poly);
+    printf("    NTT Fwd: %7.2f us\n", (now_us()-t0)/(N*10));
+
+    t0 = now_us();
+    for(int i=0; i<N*10; i++) ntt_inverse(poly);
+    printf("    NTT Inv: %7.2f us\n", (now_us()-t0)/(N*10));
+
+    printf("==========================================================\n");
+    return 0;
 }

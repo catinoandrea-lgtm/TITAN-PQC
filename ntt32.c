@@ -11,6 +11,11 @@
 #define BARR       20159
 #define INV_N_MONT ((int16_t)512)
 
+static inline int16_t barrett_scalar(int16_t a) {
+    int16_t t = (int16_t)(((int32_t)BARR * a + (1 << 25)) >> 26);
+    return (int16_t)(a - t * (int16_t)Q);
+}
+
 static const int16_t ZETAS[128] = {
     -1044, -758, -359,-1517, 1493, 1422,  287,  202, -171,  622, 1577,  182,  962,-1202,-1474, 1468,
       573,-1325,  264,  383, -829, 1458,-1602, -130, -681, 1017,  732,  608,-1542,  411, -205,-1571,
@@ -59,15 +64,15 @@ void ntt32_forward(int16_t r[256]) {
         for (int i = 0; i < 256; i += 8)
             vst1q_s16(&r[i], barrett_neon(vld1q_s16(&r[i])));
     }
-    /* Strati scalari: len = 4, 2 */
+    /* Strati scalari: len = 4, 2 — con Barrett */
     for (; len >= 2; len >>= 1) {
         for (s = 0; s < 256; s += 2 * len) {
             int16_t z = ZETAS[k++];
             for (j = s; j < s + len; j++) {
                 int32_t p  = (int32_t)z * r[j+len];
                 int16_t t  = (int16_t)((p - (int32_t)((int16_t)((int16_t)p * QINV)) * Q) >> 16);
-                r[j+len] = (int16_t)(r[j] - t);
-                r[j]     = (int16_t)(r[j] + t);
+                r[j+len] = barrett_scalar((int16_t)(r[j] - t));
+                r[j]     = barrett_scalar((int16_t)(r[j] + t));
             }
         }
     }
@@ -75,25 +80,25 @@ void ntt32_forward(int16_t r[256]) {
 
 void ntt32_inverse(int16_t r[256]) {
     int k = 127, len, s, j;
-    /* Strati scalari: len = 2, 4 */
+    /* Strati scalari: len = 2, 4 — con Barrett */
     for (len = 2; len <= 4; len <<= 1) {
         for (s = 0; s < 256; s += 2 * len) {
             int16_t z = ZETAS[k--];
             for (j = s; j < s + len; j++) {
                 int16_t t  = r[j];
-                r[j]       = (int16_t)(t + r[j+len]);
+                r[j]       = barrett_scalar((int16_t)(t + r[j+len]));
                 int32_t p  = (int32_t)z * (r[j+len] - t);
                 r[j+len]   = (int16_t)((p - (int32_t)((int16_t)((int16_t)p * QINV)) * Q) >> 16);
             }
         }
     }
-    /* Strati NEON: len = 8, 16, 32, 64, 128 */
+    /* Strati NEON: len = 8..128 — Barrett sulla somma */
     for (len = 8; len <= 128; len <<= 1) {
         for (s = 0; s < 256; s += 2 * len) {
             int16x8_t vz = vdupq_n_s16(ZETAS[k--]);
             for (j = s; j < s + len; j += 8) {
                 int16x8_t r0 = vld1q_s16(&r[j]), r1 = vld1q_s16(&r[j+len]);
-                vst1q_s16(&r[j],     vaddq_s16(r0, r1));
+                vst1q_s16(&r[j],     barrett_neon(vaddq_s16(r0, r1)));
                 vst1q_s16(&r[j+len], fqmul_neon(vz, vsubq_s16(r1, r0)));
             }
         }

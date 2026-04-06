@@ -16,6 +16,7 @@ extern "C" {
 #define KEM32_CT_BYTES  768
 #define KEM32_SS_BYTES  32
 #define KEM32_SYM_BYTES 32
+#define KEM32_KEYGEN_BYTES 64   /* FIPS 203: d[32] || z[32] */
 
 // Public key
 typedef struct {
@@ -38,7 +39,7 @@ typedef struct {
 } Kem32SharedSecret;
 
 // Function prototypes
-void kem32_keygen (Kem32PublicKey *pk, Kem32SecretKey *sk, const uint8_t seed[KEM32_SYM_BYTES]);
+void kem32_keygen (Kem32PublicKey *pk, Kem32SecretKey *sk, const uint8_t seed[KEM32_KEYGEN_BYTES]);
 void kem32_encaps (Kem32Ciphertext *ct, Kem32SharedSecret *ss,
                    const Kem32PublicKey *pk, const uint8_t rnd[KEM32_SYM_BYTES]);
 int  kem32_decaps (Kem32SharedSecret *ss,
