@@ -32,5 +32,10 @@ $(TARGET):
 	$(CC) $(CFLAGS) $(SRCS) -o $(TARGET) -lm
 	@echo "=> Build completata! Esegui: ./$(TARGET)"
 
+# --- KAT TEST (always scalar, works on any platform) ---
+kat:
+	$(CC) -O3 -std=gnu11 -Wall -Wextra titan_kat_test.c kem32.c keccakf1600.c -o titan_kat -lm
+	@echo "=> KAT build completata! Esegui: ./titan_kat"
+
 clean:
-	rm -f titan_avx2_bench titan_m1_bench titan_android_bench
+	rm -f titan_avx2_bench titan_m1_bench titan_android_bench titan_kat

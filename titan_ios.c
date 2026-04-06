@@ -207,8 +207,8 @@ static void cbd2(int16_t r[256],const uint8_t *noise){
 static void poly_pack(uint8_t *r,const int16_t p[256]){
     for(int i=0;i<256;i+=2){
         int16_t a=p[i],b=p[i+1];
-        while(a<0)a+=Q; while(a>=Q)a-=Q;
-        while(b<0)b+=Q; while(b>=Q)b-=Q;
+        while(a<0) { a+=Q; } while(a>=Q) { a-=Q; }
+        while(b<0) { b+=Q; } while(b>=Q) { b-=Q; }
         r[3*(i/2)]  =(uint8_t)a;
         r[3*(i/2)+1]=(uint8_t)((a>>8)|(b<<4));
         r[3*(i/2)+2]=(uint8_t)(b>>4);
@@ -224,7 +224,7 @@ static void poly_compress10(uint8_t *r,const int16_t p[256]){
     for(int i=0;i<256;i+=4){
         uint16_t t[4];
         for(int j=0;j<4;j++){
-            int16_t x=p[i+j]; while(x<0)x+=Q; while(x>=Q)x-=Q;
+            int16_t x=p[i+j]; while(x<0) { x+=Q; } while(x>=Q) { x-=Q; }
             t[j]=(uint16_t)(((uint32_t)x*1024+Q/2)/Q&0x3FF);
         }
         r[5*(i/4)]  =(uint8_t)t[0];
@@ -247,8 +247,8 @@ static void poly_decompress10(int16_t p[256],const uint8_t *r){
 static void poly_compress4(uint8_t *r,const int16_t p[256]){
     for(int i=0;i<256;i+=2){
         int16_t x0=p[i],x1=p[i+1];
-        while(x0<0)x0+=Q; while(x0>=Q)x0-=Q;
-        while(x1<0)x1+=Q; while(x1>=Q)x1-=Q;
+        while(x0<0) { x0+=Q; } while(x0>=Q) { x0-=Q; }
+        while(x1<0) { x1+=Q; } while(x1>=Q) { x1-=Q; }
         r[i/2]=(uint8_t)((((uint32_t)x0*16+Q/2)/Q&0x0F)|
                          ((((uint32_t)x1*16+Q/2)/Q&0x0F)<<4));
     }
@@ -395,7 +395,7 @@ static int kem_decaps(KemSharedSecret *ss,const KemCiphertext *ct,
     poly_frommont(w);
     memset(m,0,32);
     for(int l=0;l<256;l++){
-        int16_t x=w[l]; while(x<0)x+=Q; while(x>=Q)x-=Q;
+        int16_t x=w[l]; while(x<0) { x+=Q; } while(x>=Q) { x-=Q; }
         int16_t d=(int16_t)(x-1665); if(d<0)d=(int16_t)-d;
         if(d<832) m[l/8]|=(uint8_t)(1<<(l%8));
     }
