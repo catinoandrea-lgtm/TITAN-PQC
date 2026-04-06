@@ -1,0 +1,11 @@
+name: Baseline Comparison (vs pqcrystals ref)
+on: [push]
+jobs:
+  baseline-ubuntu:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Install dependencies
+      run: sudo apt-get update && sudo apt-get install -y bc
+    - name: Run baseline comparison
+      run: bash titan_baseline.sh
